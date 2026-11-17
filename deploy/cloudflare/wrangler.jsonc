@@ -1,0 +1,50 @@
+// Cloudflare Worker: serves the frontend (static assets), and runs APy in a
+// container behind /apy/*. See deploy/README.md.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "apertium-giellatekno",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-17",
+  "observability": { "enabled": true },
+
+  // The apertium-html-tools build (deploy/html-tools/). Only requests that
+  // don't match a file, and /apy/* and /admin/*, run the Worker.
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/apy/*", "/admin/*"]
+  },
+
+  "containers": [
+    {
+      "class_name": "Apy",
+      "scheduling_policy": "durable_object",
+      "images": {
+        // Built from the repo root, like `podman build -f deploy/apy/Containerfile .`
+        "apy": { "dockerfile": "../apy/Containerfile", "build_context": "../.." }
+      }
+    }
+  ],
+  "exports": {
+    "Apy": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "APY", "class_name": "Apy" }]
+  },
+
+  // Language pair archives (deploy/pairs/). `pairs/current` holds the name of
+  // the archive to use, e.g. `pairs-20261117T072601Z.tar.zst`.
+  "r2_buckets": [{ "binding": "PAIRS", "bucket_name": "apertium-pairs" }],
+
+  "vars": {
+    // The LLM request APy makes (via llm.internal, see src/index.ts). The
+    // deployment name picks the model: gpt-35-turbo runs gpt-4.1-mini, see
+    // "LLM models" in deploy/README.md.
+    "LLM_ENDPOINT": "https://gw-uit.intark.uh-it.no/azure-openai/openai/deployments/gpt-35-turbo/chat/completions?api-version=2024-02-01"
+  },
+  // Set with `npx wrangler secret put <NAME>`:
+  //   APY_LLM_API_KEY  the gateway key; added by the Worker, never given to the container
+  //   ADMIN_TOKEN      bearer token for POST /admin/restart
+  "secrets": { "required": ["APY_LLM_API_KEY", "ADMIN_TOKEN"] }
+}

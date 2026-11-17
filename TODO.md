@@ -59,10 +59,12 @@ image. Delete this file once everything below is done.
 7. [x] **Build and test the image** (`/listPairs`, `/translate`, `/translateLLM`, `/identifyLang`).
 8. [x] **First commit and push** of this repo: `.gitmodules`, submodules, README, deploy.
 9. [x] Frontend: add a way to use `/translateLLM` (e.g. a toggle) in the html-tools fork.
-10. [ ] **Deploy the frontend.** Add `deploy/html-tools/` with our `config.ts` (`apyURL`,
-    `htmlUrl`, `llmPostEditing: { model: 'GPT-4.1 mini' }`, …) and a build that copies it over
-    the fork's `config.ts`. Note that `yarn build` fetches the pair list from `apyURL`, so APy must
-    be reachable during the build.
+10. [ ] **Deploy to Cloudflare.** Everything is written and checked locally (see "Hosting on
+    Cloudflare" in `deploy/README.md`): `deploy/cloudflare/` (Worker), `deploy/deploy.sh`,
+    `deploy/pairs/`, `deploy/html-tools/config.ts`. Left: the first real deploy (`wrangler login`,
+    R2 bucket, secrets), then check cold starts, the R2 intercept and the LLM proxy for real.
+    Afterwards, redirect the old domain to the Worker; later perhaps a custom domain and
+    GitHub Actions.
 11. [ ] **Northern Sámi strings** for the `LLM_Post_Editing*` keys, by a native speaker (see the
     note in `README.md`).
 

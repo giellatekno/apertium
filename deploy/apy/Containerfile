@@ -55,20 +55,25 @@ FROM docker.io/library/debian:${DEBIAN_RELEASE}-slim
 
 COPY --from=builder /out/etc/apt/ /etc/apt/
 
-# The tools that .mode files pipe text through. The language data itself is
-# mounted from the host at /usr/share/apertium. Compiled pair data must match
-# these tool versions, so keep the VM and the image on the same cadence and
-# rebuild the image when you upgrade the pairs on the VM.
+# The tools that .mode files pipe text through. The language pairs are not in
+# the image: start.sh fetches them from PAIRS_URL (on Cloudflare: from R2), or
+# a host directory is mounted at /usr/share/apertium. Compiled pair data must
+# match these tool versions; deploy/pairs/build.sh builds pairs inside this
+# image, so rebuild the pairs archive after rebuilding the image.
+# curl and zstd are for start.sh.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 ca-certificates \
+        python3 ca-certificates curl zstd \
         apertium lttoolbox cg3 hfst hfst-ospell \
         apertium-lex-tools apertium-separable apertium-recursive apertium-anaphora \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/apy /opt/apy
 COPY deploy/apy/apy.conf /etc/apertium-apy/apy.conf
+COPY deploy/apy/start.sh /opt/apy/start.sh
 
-RUN useradd --system --no-create-home --shell /usr/sbin/nologin apy
+# start.sh unpacks the pairs into /usr/share/apertium as the apy user
+RUN useradd --system --no-create-home --shell /usr/sbin/nologin apy \
+    && chown apy:apy /usr/share/apertium /usr/share/apertium/modes
 USER apy
 
 ENV PATH=/opt/apy/venv/bin:$PATH \
@@ -77,10 +82,11 @@ ENV PATH=/opt/apy/venv/bin:$PATH \
 
 EXPOSE 2737
 
-# The program is the entrypoint; CMD is its default arguments, so
-# `podman run IMAGE --help` or overriding the arguments works as expected.
+# start.sh (fetches the pairs, then runs APy with `-C <config>`) is the
+# entrypoint; CMD is APy's other arguments, so `podman run IMAGE --help` or
+# overriding the arguments works as expected. See start.sh for its env vars.
 # --fasttext-model is here rather than in apy.conf because upstream's config
 # parser crashes on options that default to None. The model ships with APy and
 # knows sme, nob, nno and ~35 other languages.
-ENTRYPOINT ["python3", "/opt/apy/app/apy.py"]
-CMD ["-C", "/etc/apertium-apy/apy.conf", "--fasttext-model", "/opt/apy/app/lid.release.ftz", "/usr/share/apertium"]
+ENTRYPOINT ["/opt/apy/start.sh"]
+CMD ["--fasttext-model", "/opt/apy/app/lid.release.ftz", "/usr/share/apertium"]

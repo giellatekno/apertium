@@ -1,2 +1,9 @@
 # Local API keys (see deploy/README.md)
 SECRET_API_KEYS_DO_NOT_COMMIT
+
+# Cloudflare Worker (deploy/cloudflare/)
+node_modules/
+deploy/cloudflare/dist/
+deploy/cloudflare/.wrangler/
+deploy/cloudflare/.dev.vars
+deploy/cloudflare/worker-configuration.d.ts

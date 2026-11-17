@@ -1,0 +1,10 @@
+# Build context is the repo root (see deploy/apy/Containerfile). Docker and
+# podman both read this file.
+apertium-html-tools/
+deploy/cloudflare/
+**/node_modules
+**/.git
+**/__pycache__
+deploy/**/*.md
+# Always built fresh in the image
+apertium-apy/langNames.db
