@@ -3,10 +3,18 @@
 Everything Giellatekno runs on top of [Apertium](https://www.apertium.org/): our forks of the
 upstream server and web frontend, plus what we need to build and deploy them.
 
+> [!IMPORTANT]
+> **Missing Northern Sámi strings (to do).** The frontend's "Post-cleanup with AI" toggle, its
+> explanation popup and the consent popup have UI text only in English and Bokmål
+> (`apertium-html-tools/src/strings/eng.json` and `nob.json`, the `LLM_Post_Editing*` keys). In
+> `sme.json` they're missing, so Sámi users see English. A native speaker should translate them.
+> Add the same keys to `sme.json`, keeping the `{{source}}`, `{{target}}` and `{{model}}`
+> placeholders as they are.
+
 | Path | What | Upstream |
 |---|---|---|
 | `apertium-apy/` | Submodule: [giellatekno/apertium-apy](https://github.com/giellatekno/apertium-apy), branch `giellatekno-main`. APy, the HTTP API server, plus our `/translateLLM` endpoint (Apertium translation followed by LLM post-editing). | [apertium/apertium-apy](https://github.com/apertium/apertium-apy) |
-| `apertium-html-tools/` | Submodule (not added yet): [giellatekno/apertium-html-tools](https://github.com/giellatekno/apertium-html-tools), the web frontend. Despite the name, it's the client UI. | [apertium/apertium-html-tools](https://github.com/apertium/apertium-html-tools) |
+| `apertium-html-tools/` | Submodule: [giellatekno/apertium-html-tools](https://github.com/giellatekno/apertium-html-tools), branch `giellatekno-main`. The web frontend (despite the name, it's the client UI), plus our optional "Post-cleanup with AI" toggle, which uses `/translateLLM`. | [apertium/apertium-html-tools](https://github.com/apertium/apertium-html-tools) |
 | `deploy/` | Container build and runtime config. See `deploy/README.md`. | – |
 
 Language pairs (e.g. `apertium-sme-smj`) are **not** part of this repo. The server installs them

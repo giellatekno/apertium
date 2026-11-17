@@ -5,4 +5,4 @@
 [submodule "apertium-html-tools"]
 	path = apertium-html-tools
 	url = git@github.com:giellatekno/apertium-html-tools.git
-	branch = master
+	branch = giellatekno-main

@@ -12,15 +12,17 @@ image. Delete this file once everything below is done.
     `llm.example.conf`
   - adds 3 lines to `apertium_apy/apy.py`: the import, plus
     `handlers.extend(llm_handlers(args.config))` in `setup_application`
-- This repo has the `apertium-apy` submodule added (`branch = giellatekno-main`), with nothing
-  committed yet. `origin/main` doesn't exist yet.
+- This repo is pushed (`origin/main`). Both submodules track `giellatekno-main`.
+- `giellatekno/apertium-html-tools`: branch `giellatekno-main` (the fork's default) = upstream
+  `b61d748` plus the "Post-cleanup with AI" toggle (step 9). It's turned on by
+  `llmPostEditing: { model: 'GPT-4.1 mini' }` in `config.ts`.
 - `deploy/` is restructured (steps 4–6): the image builds from the submodule, not a patch.
   Image builds and step 7 is done: `/listPairs`, `/translate`, `/identifyLang` and `/translateLLM`
   (sme-nob, gpt-4.1-mini) all work. The old checkout `~/gut/apertium/apertium-apy` can be deleted once this repo works.
 
 ## Steps
 
-1. [ ] **Fork apertium-html-tools and add it as a submodule.**
+1. [x] **Fork apertium-html-tools and add it as a submodule.**
    ```sh
    gh repo fork apertium/apertium-html-tools --org giellatekno --clone=false
    git submodule add -b master git@github.com:giellatekno/apertium-html-tools.git
@@ -56,7 +58,13 @@ image. Delete this file once everything below is done.
    versions, and workarounds sections.
 7. [x] **Build and test the image** (`/listPairs`, `/translate`, `/translateLLM`, `/identifyLang`).
 8. [x] **First commit and push** of this repo: `.gitmodules`, submodules, README, deploy.
-9. [ ] Frontend: add a way to use `/translateLLM` (e.g. a toggle) in the html-tools fork.
+9. [x] Frontend: add a way to use `/translateLLM` (e.g. a toggle) in the html-tools fork.
+10. [ ] **Deploy the frontend.** Add `deploy/html-tools/` with our `config.ts` (`apyURL`,
+    `htmlUrl`, `llmPostEditing: { model: 'GPT-4.1 mini' }`, …) and a build that copies it over
+    the fork's `config.ts`. Note that `yarn build` fetches the pair list from `apyURL`, so APy must
+    be reachable during the build.
+11. [ ] **Northern Sámi strings** for the `LLM_Post_Editing*` keys, by a native speaker (see the
+    note in `README.md`).
 
 ## Open questions
 
