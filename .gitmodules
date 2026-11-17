@@ -1,0 +1,8 @@
+[submodule "apertium-apy"]
+	path = apertium-apy
+	url = git@github.com:giellatekno/apertium-apy.git
+	branch = giellatekno-main
+[submodule "apertium-html-tools"]
+	path = apertium-html-tools
+	url = git@github.com:giellatekno/apertium-html-tools.git
+	branch = master

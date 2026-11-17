@@ -1,0 +1,7 @@
+# Build context is the repo root (see deploy/apy/Containerfile)
+apertium-html-tools/
+**/.git
+**/__pycache__
+deploy/**/*.md
+# Always built fresh in the image
+apertium-apy/langNames.db
