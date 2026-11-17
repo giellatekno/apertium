@@ -28,8 +28,8 @@ image. Delete this file once everything below is done.
    Create `giellatekno-main` there (and make it the default branch) once there are frontend
    changes, then set `branch = giellatekno-main` in `.gitmodules`. Like the apy fork, it may have
    old `giellatekno*` branches copied from upstream; check with `git ls-remote --heads`.
-2. [ ] **Add the `upstream` remotes** in both submodules (see README "Getting started").
-3. [ ] **Optional: delete the obsolete branches in the forks.** This only deletes the forks'
+2. [x] **Add the `upstream` remotes** in both submodules (see README "Getting started").
+3. [x] **Optional: delete the obsolete branches in the forks.** This only deletes the forks'
    copies; upstream keeps its own. For apertium-apy:
    `giellatekno giellatekno-checkerhandler giellatekno-keepuntranslated-parse-before-translating
    giellatekno-smaller-pipebuf giellatekno-xsl-pdf giellatekno-xsl-pdf-diskcache`
@@ -55,7 +55,7 @@ image. Delete this file once everything below is done.
    the build command and paths. Keep the Run, runtime mounts, `APY_LLM_API_KEY`, matching tool
    versions, and workarounds sections.
 7. [x] **Build and test the image** (`/listPairs`, `/translate`, `/translateLLM`, `/identifyLang`).
-8. [ ] **First commit and push** of this repo: `.gitmodules`, submodules, README, deploy.
+8. [x] **First commit and push** of this repo: `.gitmodules`, submodules, README, deploy.
 9. [ ] Frontend: add a way to use `/translateLLM` (e.g. a toggle) in the html-tools fork.
 
 ## Open questions
