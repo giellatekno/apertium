@@ -77,8 +77,8 @@ APY_LLM_API_KEY=xxxxxxxx
 **Status:** written and checked locally (`manage.py deploy … --dry-run`, the container fetching
 pair archives, the built frontend talking to APy through `/apy`), but **not yet deployed**.
 `wrangler dev` can't run the container on a machine where `docker` is rootless podman (`crun:
-cannot set memory swappiness with cgroupv2`); it needs real Docker. Deploying doesn't use Docker:
-`manage.py` pushes the image itself.
+cannot set memory swappiness with cgroupv2`); it needs real Docker. `manage.py` doesn't use
+Docker at all: it builds with podman and pushes the image itself.
 
 Each **instance** (in `cloudflare/instances.toml`, by codename: `jorgal` for sme-nob, `tolkimine` for fin-est both ways) is one Worker, named after it, using
 [Cloudflare Containers](https://developers.cloudflare.com/containers/) (Workers Paid plan):
@@ -213,10 +213,32 @@ language menus are built from the pairs).
 
 **A new instance:** add it to `instances.toml` and deploy it. It shares the bucket and pair versions with the other instances.
 
-**Docker's DNS** (only `--dry-run` still builds with Docker): Docker builds run in a long-lived `buildx_buildkit_default` container, which
-keeps the DNS servers of the network it started on. If a build fails with `lookup
-registry-1.docker.io … server misbehaving` after you change networks, run
-`docker restart buildx_buildkit_default`.
+### Serving an instance under another address
+
+To show an instance at an address we don't control in Cloudflare, e.g. `https://gtweb.uit.no/jorgal/`,
+reverse-proxy that path to the Worker in nginx. Users stay on that address; the frontend calls
+`apy` next to the page (`html-tools/config.ts`), so it works under any path:
+
+```nginx
+location = /jorgal { return 301 /jorgal/; }   # the frontend needs the trailing slash
+location /jorgal/ {
+    proxy_pass https://jorgal.uit-anders.workers.dev/;   # the trailing / strips /jorgal
+    proxy_ssl_server_name on;                            # Cloudflare needs SNI
+    proxy_ssl_verify on;
+    proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+    proxy_http_version 1.1;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 120s;      # a cold start plus an LLM call
+    client_max_body_size 32m;     # document translation uploads
+}
+```
+
+The server then carries the traffic (one extra hop to Cloudflare's nearest location), and the Worker
+sees the server's IP address rather than the users'. nginx resolves the Worker's hostname when it
+loads the config. A whole hostname (e.g. `jorgal.uit.no`) could instead point to Cloudflare
+directly, but that needs a DNS record from whoever runs the domain, plus a domain of ours in
+Cloudflare (Cloudflare for SaaS custom hostnames).
 
 ## LLM models
 

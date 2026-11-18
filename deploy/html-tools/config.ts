@@ -4,8 +4,10 @@
 // config.ts is evaluated twice: by Node while building (build.ts fetches the
 // pair list, language names etc. from APy and bakes them into the bundle), and
 // in the browser. At build time apyURL is a local APy container with the same
-// image and pairs archive as the deployed one; in the browser it is /apy on
-// whatever domain serves the page, so the build doesn't depend on the domain.
+// image and pairs archive as the deployed one; in the browser it is `apy` next
+// to the page, so the build depends on neither the domain nor the path: on the
+// Worker it's /apy, behind a proxy at https://gtweb.uit.no/jorgal/ it's
+// /jorgal/apy (the proxy must redirect /jorgal to /jorgal/).
 import { Config, Mode } from './src/types';
 
 const building = typeof window === 'undefined';
@@ -21,8 +23,8 @@ const buildEnv = (name: string): string => {
 export default {
   defaultLocale: 'eng',
   // Only used at build time, for sitemap.xml
-  htmlUrl: building ? buildEnv('HTML_URL') : `${window.location.origin}/`,
-  apyURL: building ? buildEnv('APY_BUILD_URL') : `${window.location.origin}/apy`,
+  htmlUrl: building ? buildEnv('HTML_URL') : new URL('.', window.location.href).href,
+  apyURL: building ? buildEnv('APY_BUILD_URL') : new URL('apy', window.location.href).href,
 
   defaultMode: Mode.Translation,
   // The pairs we serve come without separate analyzers/generators

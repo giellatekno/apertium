@@ -850,7 +850,9 @@ def cmd_deploy(args, account: Account, instance: Instance, instances: dict[str, 
     type_check()
 
     if dry:
-        config = wrangler_config(instance, image=None)
+        # A placeholder image: a dry run doesn't check it, and no Docker build is needed
+        placeholder = f"registry.cloudflare.com/{account.id}/{instance.repository}@sha256:{'0' * 64}"
+        config = wrangler_config(instance, image=placeholder)
         step("Dry run: wrangler deploy --dry-run (nothing is uploaded)")
         with tempfile.TemporaryDirectory() as tmp:
             wrangler(account, "deploy", "--config", str(config), "--dry-run", "--outdir", tmp)
