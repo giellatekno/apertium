@@ -215,30 +215,11 @@ language menus are built from the pairs).
 
 ### Serving an instance under another address
 
-To show an instance at an address we don't control in Cloudflare, e.g. `https://gtweb.uit.no/jorgal/`,
-reverse-proxy that path to the Worker in nginx. Users stay on that address; the frontend calls
-`apy` next to the page (`html-tools/config.ts`), so it works under any path:
-
-```nginx
-location = /jorgal { return 301 /jorgal/; }   # the frontend needs the trailing slash
-location /jorgal/ {
-    proxy_pass https://jorgal.uit-anders.workers.dev/;   # the trailing / strips /jorgal
-    proxy_ssl_server_name on;                            # Cloudflare needs SNI
-    proxy_ssl_verify on;
-    proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
-    proxy_http_version 1.1;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_read_timeout 120s;      # a cold start plus an LLM call
-    client_max_body_size 32m;     # document translation uploads
-}
-```
-
-The server then carries the traffic (one extra hop to Cloudflare's nearest location), and the Worker
-sees the server's IP address rather than the users'. nginx resolves the Worker's hostname when it
-loads the config. A whole hostname (e.g. `jorgal.uit.no`) could instead point to Cloudflare
-directly, but that needs a DNS record from whoever runs the domain, plus a domain of ours in
-Cloudflare (Cloudflare for SaaS custom hostnames).
+To show an instance at an address we don't control in Cloudflare, reverse-proxy it to the Worker
+in nginx; users stay on that address. Jorgal is served this way at `https://gtweb.uit.no/jorgal/`
+and `https://jorgal.uit.no/`: the setup and nginx config are under "gtweb.uit.no" in the
+[top-level README](../README.md#gtwebuitno). The frontend calls `apy` next to the page
+(`html-tools/config.ts`), so it works under any path. A whole hostname needs its own certificate.
 
 ## LLM models
 
