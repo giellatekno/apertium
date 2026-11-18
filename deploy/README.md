@@ -8,12 +8,12 @@ deployment-specific parts:
 |---|---|
 | `apy/Containerfile` | Two-stage build: build the `apertium-apy` submodule; copy only the runtime parts into `debian:trixie-slim`. No language pairs |
 | `apy/apy.conf` | Runtime config (`[APY]` + `[LLM]`). A copy is baked in; mount your own over it |
-| `apy/start.sh` | The image's entrypoint: fetches the language pairs from `PAIRS_URL` if set, then runs APy |
-| `deploy.sh` | Deploys everything to Cloudflare: builds the image and the frontend, uploads the pairs, runs `wrangler deploy`, restarts APy |
+| `apy/start.sh` | The image's entrypoint: fetches the language pairs in `PAIRS` from `PAIRS_URL` if set, then runs APy |
 | `html-tools/config.ts` | Our frontend config, used instead of the fork's `config.ts` when building |
-| `pairs/build.sh` | Builds a language pairs archive (`pairs-<timestamp>.tar.zst`) inside the APy image |
-| `pairs/upload.sh` | Uploads an archive to R2 and makes it the current one |
-| `cloudflare/` | The Cloudflare Worker: serves the frontend, runs APy in a container. See [Hosting on Cloudflare](#hosting-on-cloudflare-prototype) |
+| `pairs/build.sh` | Builds the archive of one language pair (`<package version>.tar.zst`) inside the APy image |
+| `cloudflare/` | The Cloudflare Worker (serves the frontend, runs APy in a container), and `manage.py` to deploy and manage it. See [Hosting on Cloudflare](#hosting-on-cloudflare-prototype) |
+| `cloudflare/manage.py` | Deploys, inspects, restarts and deletes instances; manages their R2 buckets |
+| `cloudflare/instances.toml` | The Cloudflare accounts (test, prod) and Apertium instances (e.g. `sme-nob`) |
 
 ## Build
 
@@ -48,17 +48,18 @@ podman run -d --name apertium-apy \
 
 Then `podman restart apertium-apy` after you change the config, or after you install or upgrade language pairs.
 
-Instead of mounting the pairs, you can give the container a pairs archive: `-e PAIRS_URL=http://…/pairs-….tar.zst`
-(see `pairs/build.sh`; any HTTP server works, e.g. `python3 -m http.server` in the archive's directory).
+Instead of mounting the pairs, you can give the container pair archives from `pairs/build.sh`: put
+them in a directory as `<pair>.tar.zst`, and run with
+`-v DIR:/pairs:ro -e PAIRS="sme-nob" -e PAIRS_URL=file:///pairs` (an `http://` URL works too).
 
 ### What to provide at runtime
 
 | Host (VM) | Container | Required | Why |
 |---|---|---|---|
-| `/usr/share/apertium` | `/usr/share/apertium` (ro) | this or `PAIRS_URL` | Language pair data and `.mode` files from the `apertium-*` packages. **Use the same path:** mode files contain absolute paths like `/usr/share/apertium/apertium-sme-nob/sme-nob.automorf.hfst`. APy finds every `*.mode` under it on startup, so new pairs show up after a restart. |
+| `/usr/share/apertium` | `/usr/share/apertium` (ro) | this or `PAIRS` | Language pair data and `.mode` files from the `apertium-*` packages. **Use the same path:** mode files contain absolute paths like `/usr/share/apertium/apertium-sme-nob/sme-nob.automorf.hfst`. APy finds every `*.mode` under it on startup, so new pairs show up after a restart. |
 | `/etc/apertium-apy/` (containing `apy.conf`) | `/etc/apertium-apy/` (ro) | no (a copy of `deploy/apy/apy.conf` is baked in) | `[APY]` server options and `[LLM]` endpoint, model and prompt. A `prompt_file = llm-prompt.txt` next to it works too. The container runs as an unprivileged user, so the files must be world-readable (`chmod 644`). |
 | env `APY_LLM_API_KEY` | env | for `/translateLLM` | The gateway key. Without it APy logs an error and leaves `/translateLLM` out; everything else works. |
-| env `PAIRS_URL` | env | this or the mount | A pairs archive from `pairs/build.sh`, unpacked into `/usr/share/apertium` on startup (`start.sh`). |
+| env `PAIRS`, `PAIRS_URL` | env | this or the mount | Pairs to fetch (e.g. `sme-nob sme-smj`) from `$PAIRS_URL/<pair>.tar.zst` (archives from `pairs/build.sh`), unpacked into `/usr/share/apertium` on startup (`start.sh`). |
 | env `APY_LLM_ENDPOINT` | env | no | Overrides `endpoint` in `[LLM]`. Used on Cloudflare, where it points to the Worker's `llm.internal` proxy. |
 
 Example `/etc/apertium-apy.env` (`chmod 600`; keep it outside the mounted directory so the key isn't visible inside the container as a file):
@@ -69,27 +70,28 @@ APY_LLM_API_KEY=xxxxxxxx
 
 (`podman secret create apy-llm-key -` with `--secret apy-llm-key,type=env,target=APY_LLM_API_KEY` works too, if you prefer.)
 
-**Matching tool versions:** the image installs the Apertium tools (lttoolbox, cg3, hfst, …) from the Apertium apt repo. Pairs are compiled data that must be readable by those tools. With a mount, build the image with the same `DEBIAN_RELEASE` and `APERTIUM_CADENCE` as the host, and rebuild it when you upgrade pairs. A pairs archive is built inside the image itself, so it matches; it records the tool versions, and `start.sh` logs a warning if the image's differ. If a pair suddenly returns errors, rebuild the image and then the archive.
+**Matching tool versions:** the image installs the Apertium tools (lttoolbox, cg3, hfst, …) from the Apertium apt repo. Pairs are compiled data that must be readable by those tools. With a mount, build the image with the same `DEBIAN_RELEASE` and `APERTIUM_CADENCE` as the host, and rebuild it when you upgrade pairs. A pair archive is built inside the image itself, so it matches; it records the tool versions, and `start.sh` logs a warning if the image's differ. If a pair suddenly returns errors, rebuild the image.
 
 ## Hosting on Cloudflare (prototype)
 
-**Status:** written and checked locally (types, `DRY_RUN=1 deploy/deploy.sh`, the container
-fetching an archive, the built frontend talking to APy through `/apy`), but **not yet deployed**. `wrangler dev` can't run the container on a
-machine where `docker` is rootless podman (`crun: cannot set memory swappiness with cgroupv2`);
-it needs real Docker. Deploying only builds and pushes the image, which works with podman.
+**Status:** written and checked locally (`manage.py deploy … --dry-run`, the container fetching
+pair archives, the built frontend talking to APy through `/apy`), but **not yet deployed**.
+`wrangler dev` can't run the container on a machine where `docker` is rootless podman (`crun:
+cannot set memory swappiness with cgroupv2`); it needs real Docker. Deploying doesn't use Docker:
+`manage.py` pushes the image itself.
 
-One Worker (`cloudflare/`) serves everything, using
+Each **instance** (in `cloudflare/instances.toml`, e.g. `sme-nob`) is one Worker, using
 [Cloudflare Containers](https://developers.cloudflare.com/containers/) (Workers Paid plan):
 
 ```
-browser ──▶ Worker
-             ├─ /*             static assets: the frontend build (cloudflare/dist/)
+browser ──▶ Worker apertium-<instance>
+             ├─ /*             static assets: the frontend build
              ├─ /apy/*         Durable Object "apy-0" ──▶ APy container (port 2737)
              └─ /admin/restart restart APy (bearer token)
 
 APy container: no internet access. Its only way out is two made-up hostnames, which the
 Durable Object intercepts and the Worker handles:
-  http://pairs.internal/current  ──▶ R2 bucket apertium-pairs: the archive named in pairs/current
+  http://pairs.internal/<pair>.tar.zst ──▶ R2 bucket apertium-pairs: the pair's current version
   http://llm.internal/…          ──▶ UiT LLM gateway, with the API key added by the Worker
 ```
 
@@ -97,63 +99,118 @@ Durable Object intercepts and the Worker handles:
   the one LLM request APy makes (`LLM_ENDPOINT` in `wrangler.jsonc`) and adds the real key
   from a Worker secret. A compromised container can't read the key or reach anything else.
 - **Language pairs come from R2**, not the image: on start, `start.sh` downloads and unpacks the
-  current archive (~22 MB for sme-nob; about a second locally). Updating pairs needs no new image,
-  only an upload and a restart.
-- **One instance**, 1 vCPU / 2 GiB / 4 GB disk (`APY_RESOURCES` in `src/index.ts`). It stops after
-  6 hours without requests (`IDLE_TIMEOUT_MS`, the maximum); the next request starts it again,
-  which takes a few seconds. Memory and disk are billed while it runs, CPU only when used.
+  current version of each of the instance's pairs (~22 MB for sme-nob; about a second locally).
+  One bucket per account, `apertium-pairs`, is shared by all instances. Updating a pair needs no
+  new image and no deploy.
+- **One container per instance**, 1 vCPU / 2 GiB / 4 GB disk (`APY_RESOURCES` in `src/index.ts`).
+  It stops after 6 hours without requests (`IDLE_TIMEOUT_MS`, the maximum); the next request starts
+  it again, which takes a few seconds. Memory and disk are billed while it runs, CPU only when used.
 - **The frontend is static and needs no APy to load.** Its build bakes in the pair list and
-  language names, which it fetches from APy. `deploy.sh` builds it against a *local* APy running
-  the same image and pairs archive, so the build doesn't need the deployed one, and the language
-  menus always match the deployed pairs. In the browser it calls `/apy` on whatever domain serves
-  it (see `html-tools/config.ts`), so the build doesn't depend on the domain either.
+  language names, which it fetches from APy. `manage.py deploy` builds it against a *local* APy
+  running the same image and pair archives, so the build doesn't need the deployed one, and the
+  language menus always match the deployed pairs. In the browser it calls `/apy` on whatever domain
+  serves it (see `html-tools/config.ts`), so the build doesn't depend on the domain either.
 - Cloudflare's current container API (`scheduling_policy: "durable_object"`) is in **beta**.
 
-### First-time setup
+### manage.py
+
+Everything goes through `deploy/cloudflare/manage.py` (Python 3.11+, standard library only). Each
+command takes an instance and an account; `test` is "UiT / Anders Lorentsen", `prod` is
+"Giellatekno" (the group account). The same in both accounts: `deploy`, `pairs rollback`,
+`pairs delete` and `pairs prune` ask for confirmation (`--yes` skips it); `delete` asks you to
+type the instance name, `pairs delete-bucket` to type "yes, delete the bucket"; the rest
+(`restart`, `pairs update`, `pairs create-bucket`, and anything read-only) doesn't ask.
 
 ```sh
 cd deploy/cloudflare
-npm install
-npx wrangler login
-npx wrangler r2 bucket create apertium-pairs
-npx wrangler secret put APY_LLM_API_KEY        # the UiT gateway key
-npx wrangler secret put ADMIN_TOKEN            # any long random string, e.g. `openssl rand -hex 32`
+./manage.py list                          # instances, and where they're deployed
+./manage.py deploy  sme-nob test          # build and deploy; asks which pairs (--dry-run to try)
+./manage.py status  sme-nob test          # deployed build, container, its pairs, request stats
+./manage.py logs    sme-nob test          # live logs
+./manage.py restart sme-nob test          # restart APy
+./manage.py delete  sme-nob test          # Worker and container (--with-bucket: also the pairs bucket)
+
+./manage.py pairs create-bucket test      # the account's apertium-pairs bucket (deploy also creates it)
+./manage.py pairs delete-bucket test      # with all pairs; you must type "yes, delete the bucket"
+./manage.py pairs list-available          # all pairs in the Apertium apt repo, newest versions
+./manage.py pairs list     test           # pairs in R2: versions, current, newer ones available
+./manage.py pairs update   test [PAIR…]   # upload newer versions, restart the instances using them
+./manage.py pairs rollback test PAIR [VERSION]
+./manage.py pairs delete   test PAIR VERSION
+./manage.py pairs prune    test [--keep N]
 ```
 
-Then build a pairs archive and deploy (below). The first container requests may fail for a few
-minutes after the first deploy.
+`./manage.py <command> --help` lists the options. Requirements: Node.js, podman (or `ENGINE=docker`),
+and a login: `npx wrangler login` (once, covers both
+accounts). `manage.py` uses that login for `wrangler` and for Cloudflare's API (R2 listings,
+stats), and picks the account by setting `CLOUDFLARE_ACCOUNT_ID`. For manual `wrangler` commands,
+set it yourself (the IDs are in `instances.toml`), or `wrangler` asks which account to use.
 
-### Deploying
+**Secrets:** `deploy/cloudflare/secrets.<account>.env` (gitignored, `chmod 600`) holds the Worker's
+secrets for that account. The first `deploy` asks for the LLM gateway key and generates the
+`ADMIN_TOKEN`:
 
-Every deploy, whether it's new code, new pairs or both:
-
-```sh
-podman build -t apertium-apy-llm -f deploy/apy/Containerfile .   # build.sh uses this image
-mkdir -p /tmp/pairs
-deploy/pairs/build.sh /tmp/pairs apertium-sme-nob                 # list every pair to serve
-ADMIN_TOKEN=… deploy/deploy.sh /tmp/pairs/pairs-<timestamp>.tar.zst
+```
+APY_LLM_API_KEY=<the UiT gateway key>
+ADMIN_TOKEN=<long random string>
 ```
 
-To redeploy without changing the pairs, pass the same archive again: it doesn't need rebuilding.
-`deploy.sh`:
+They're set on every deploy (`wrangler deploy --secrets-file`); `wrangler` won't deploy a *new*
+Worker without its required secrets, and `wrangler secret put` can't set them before it exists.
+`manage.py` also uses `ADMIN_TOKEN` for restarts.
 
-1. builds the APy image locally and starts it with the archive;
-2. builds the frontend (the fork's committed `HEAD` with `html-tools/config.ts`) against it, into
-   `cloudflare/dist/`, plus `build-info.json` recording the pairs and commits;
-3. uploads the archive to R2 and makes it the current one;
-4. runs `wrangler deploy`, which builds the image with Docker, pushes it if it changed, and deploys
-   the Worker and the frontend;
-5. restarts APy (`POST /admin/restart`), so it runs the new image and pairs.
+### What `deploy` does
 
-It refuses to run if a submodule has uncommitted changes (`ALLOW_DIRTY=1` overrides).
-`DRY_RUN=1` does steps 1–2 and `wrangler deploy --dry-run`. Check a live site's contents at
-`/build-info.json`.
+1. Builds the APy image locally (`apertium-apy-llm`).
+2. Checks that the instance's pairs exist in the Apertium apt repo (asking inside the image, which
+   uses the same repo `pairs/build.sh` installs from), before uploading or deploying anything.
+3. Creates the `apertium-pairs` R2 bucket, if it doesn't exist yet.
+4. Brings each of the instance's pairs to the newest version (below): builds the archive with
+   `pairs/build.sh`, uploads it and makes it current, if R2 doesn't have it yet.
+5. Starts the image locally with those pairs and builds the frontend against it (the fork's
+   committed `HEAD` with `html-tools/config.ts`), plus `build-info.json` recording the instance,
+   pair versions and commits.
+6. Pushes the APy image from step 1 to the account's Cloudflare registry
+   (`apertium-<instance>-apy`), noting the digest the registry received.
+7. Writes `.build/<instance>/wrangler.json`: `wrangler.jsonc` with the instance's Worker name,
+   pairs (`PAIRS`), frontend, and that image pinned by digest.
+8. `wrangler deploy`: deploys the Worker, the frontend and the container with that image.
+9. Restarts APy, so it runs the new image and pairs, and restarts other deployed instances whose
+   pairs got a new version.
 
-Each archive holds all pairs. To roll back, deploy with an older archive. Deploying an archive
-without `deploy.sh` (`pairs/upload.sh` and a restart) works too, but then the frontend's language
-menus may not match the pairs.
+`manage.py` pushes the image itself rather than letting `wrangler` build and push it: so the
+deployed image is exactly the one the pairs and frontend were built and tested with, and because
+`wrangler` takes the image digest from the local engine. With podman behind the `docker` command,
+the pushed image gets a different digest, and `wrangler deploy` fails with "The image is invalid or
+does not exist in this account".
 
-**Docker's DNS:** Docker builds run in a long-lived `buildx_buildkit_default` container, which
+It refuses to run if a submodule has uncommitted changes (`--allow-dirty` overrides). Archives
+are cached in `deploy/cloudflare/.build/pairs/`, build output in `.build/<instance>/`. Check a
+live site's contents at `/build-info.json`, or with `status`.
+
+### Pair versions and rollback
+
+R2 holds `pairs/<pair>/<version>.tar.zst` for every version uploaded, and `pairs/<pair>/current`
+naming the one in use. A pair is always at the newest version in the apt repo, unless it's rolled
+back:
+
+- `deploy` and `pairs update` upload a version that R2 doesn't have yet and make it current. So a
+  new release goes live with the next deploy or `pairs update`, which also restarts the instances
+  using it. Instances don't need a redeploy for a new pair *version*; their language menus don't
+  change.
+- `pairs rollback test sme-nob` points `current` back to the previous version (or a given one) and
+  restarts the instances using it. While the version it rolled back from is the newest, deploys
+  and updates leave the rollback alone (and warn). When a newer version is released, it replaces
+  the rollback; `pairs rollback test sme-nob <newest>` rolls forward by hand.
+- Old versions stay in R2 for rollbacks until `pairs prune` (keeps the current and 2 others per
+  pair) or `pairs delete`.
+
+Adding a pair to an instance, or removing one: edit `instances.toml` and deploy (the frontend's
+language menus are built from the pairs).
+
+**A new instance:** add it to `instances.toml` and deploy it. It shares the bucket and pair versions with the other instances.
+
+**Docker's DNS** (only `--dry-run` still builds with Docker): Docker builds run in a long-lived `buildx_buildkit_default` container, which
 keeps the DNS servers of the network it started on. If a build fails with `lookup
 registry-1.docker.io … server misbehaving` after you change networks, run
 `docker restart buildx_buildkit_default`.
@@ -192,7 +249,7 @@ If UiT adds a reasoning model (`gpt-5*`, `o*`), note that `llm_postedit.py` alwa
 
 - **Baked in:** `langNames.db`, the localised language names (`/listLanguageNames`). Despite being built by the Makefile, it comes only from the TSV files in `language_names/` (scraped CLDR/SIL names). It does not look at installed pairs, so new pairs don't require rebuilding it.
 - **Baked in:** `lid.release.ftz`, APy's own fastText language-identification model (`/identifyLang`). It knows sme, nob, nno and ~35 other languages. cld2 is not included: it is only used when fastText isn't, and it doesn't know Sámi.
-- **Not included:** the language pairs (mounted, or fetched from `PAIRS_URL`). Also not included: the upstream test pair `apertium-eng-spa` and `giella-core`, which the upstream Dockerfile installs.
+- **Not included:** the language pairs (mounted, or fetched via `PAIRS`/`PAIRS_URL`). Also not included: the upstream test pair `apertium-eng-spa` and `giella-core`, which the upstream Dockerfile installs.
 
 ## Workarounds in the Containerfile (upstream issues)
 

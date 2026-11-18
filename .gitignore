@@ -7,3 +7,10 @@ deploy/cloudflare/dist/
 deploy/cloudflare/.wrangler/
 deploy/cloudflare/.dev.vars
 deploy/cloudflare/worker-configuration.d.ts
+
+# Worker secrets for deploy/deploy.sh (SECRETS_FILE)
+deploy/cloudflare/secrets.*.env
+
+# manage.py build output (generated wrangler config, frontend, pairs archives)
+deploy/cloudflare/.build/
+__pycache__/

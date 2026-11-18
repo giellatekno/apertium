@@ -7,7 +7,7 @@
 //
 // The container has no internet access. Its only way out is two made-up
 // hostnames, which the Durable Object intercepts and handles here:
-//   pairs.internal   → PairsHandler: the current language pair archive from R2
+//   pairs.internal   → PairsHandler: the current version of each language pair, from R2
 //   llm.internal     → LlmProxy: the UiT LLM gateway, with the API key added
 //                      here, so the container never has the key
 
@@ -75,7 +75,8 @@ export class Apy extends DurableObject<Env> {
         instance: APY_RESOURCES,
         enableInternet: false,
         env: {
-          PAIRS_URL: 'http://pairs.internal/current',
+          PAIRS: this.env.PAIRS,
+          PAIRS_URL: 'http://pairs.internal',
           APY_LLM_ENDPOINT: `http://llm.internal${llm.pathname}${llm.search}`,
           // APy needs some key to enable /translateLLM; LlmProxy replaces it
           APY_LLM_API_KEY: 'added-by-worker',
@@ -113,19 +114,21 @@ export class Apy extends DurableObject<Env> {
   }
 }
 
-// http://pairs.internal/current → the archive named in R2 `pairs/current`
+// http://pairs.internal/<pair>.tar.zst → R2 pairs/<pair>/<version>.tar.zst,
+// where pairs/<pair>/current names the version. Only this instance's pairs.
 export class PairsHandler extends WorkerEntrypoint<Env> {
   async fetch(request: Request): Promise<Response> {
-    if (request.method !== 'GET' || new URL(request.url).pathname !== '/current') {
+    const pair = new URL(request.url).pathname.match(/^\/([a-z]{3}-[a-z]{3})\.tar\.zst$/)?.[1];
+    if (request.method !== 'GET' || !pair || !this.env.PAIRS.split(/\s+/).includes(pair)) {
       return new Response('Not found', { status: 404 });
     }
-    const name = (await (await this.env.PAIRS.get('pairs/current'))?.text())?.trim();
-    const archive = name ? await this.env.PAIRS.get(`pairs/${name}`) : null;
+    const version = (await (await this.env.PAIRS_BUCKET.get(`pairs/${pair}/current`))?.text())?.trim();
+    const archive = version ? await this.env.PAIRS_BUCKET.get(`pairs/${pair}/${version}.tar.zst`) : null;
     if (!archive) {
-      console.error(`Language pairs not found in R2 (pairs/current: ${name ?? 'missing'})`);
-      return new Response('Language pairs not found', { status: 404 });
+      console.error(`Language pair ${pair} not found in R2 (current: ${version ?? 'missing'})`);
+      return new Response('Language pair not found', { status: 404 });
     }
-    console.log(`Serving language pairs ${name}`);
+    console.log(`Serving language pair ${pair} ${version}`);
     return new Response(archive.body, { headers: { 'content-length': String(archive.size) } });
   }
 }

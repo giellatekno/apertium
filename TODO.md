@@ -59,12 +59,16 @@ image. Delete this file once everything below is done.
 7. [x] **Build and test the image** (`/listPairs`, `/translate`, `/translateLLM`, `/identifyLang`).
 8. [x] **First commit and push** of this repo: `.gitmodules`, submodules, README, deploy.
 9. [x] Frontend: add a way to use `/translateLLM` (e.g. a toggle) in the html-tools fork.
-10. [ ] **Deploy to Cloudflare.** Everything is written and checked locally (see "Hosting on
-    Cloudflare" in `deploy/README.md`): `deploy/cloudflare/` (Worker), `deploy/deploy.sh`,
-    `deploy/pairs/`, `deploy/html-tools/config.ts`. Left: the first real deploy (`wrangler login`,
-    R2 bucket, secrets), then check cold starts, the R2 intercept and the LLM proxy for real.
-    Afterwards, redirect the old domain to the Worker; later perhaps a custom domain and
-    GitHub Actions.
+10. [ ] **Deploy to Cloudflare** with `deploy/cloudflare/manage.py` (see "Hosting on Cloudflare"
+    in `deploy/README.md`).
+    - test (2026-11-18): `sme-nob` deployed and checked at
+      https://apertium-sme-nob.uit-anders.workers.dev: cold start ~3 s, pairs from R2, `/translate`,
+      `/translateLLM` through the key-adding proxy.
+    - prod: blocked; the Giellatekno account needs the **Workers Paid plan** for Containers. Then
+      `manage.py deploy sme-nob prod` (the bucket and sme-nob are already there).
+    - Afterwards: redirect the old domain to the Worker; later perhaps a custom domain and GitHub
+      Actions. The test registry has an unused image from a failed deploy
+      (`apertium-sme-nob-apy-apy`) that can be deleted.
 11. [ ] **Northern Sámi strings** for the `LLM_Post_Editing*` keys, by a native speaker (see the
     note in `README.md`).
 

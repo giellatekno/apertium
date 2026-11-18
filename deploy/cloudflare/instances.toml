@@ -1,0 +1,22 @@
+# Cloudflare accounts and Apertium instances, used by manage.py.
+
+# One Cloudflare login reaches both accounts; manage.py picks one per command.
+# Account IDs are not secret (they're in every dashboard URL).
+[accounts.test]
+id = "fb7ec344edc14881af8962daa57f6ad4"
+name = "UiT / Anders Lorentsen"
+
+[accounts.prod]
+id = "e2bfaf09d6fa661780cb33620a17f1cf"
+name = "Giellatekno"
+
+# Apertium instances. Each one is, in every account it's deployed to, its own
+# Worker (apertium-<instance>) with an APy container and the frontend. `pairs`
+# are the language pairs it serves (`manage.py pairs list-available` lists
+# them; package apertium-<pair>). The pairs themselves live in one R2 bucket
+# per account (apertium-pairs), shared by all instances, always at the newest
+# version unless rolled back (`manage.py pairs`). Changing an instance's pairs
+# needs a deploy, since the frontend's language menus are built from them.
+[instances.sme-nob]
+description = "North Sámi to Norwegian Bokmål, with optional AI post-cleanup"
+pairs = ["sme-nob"]

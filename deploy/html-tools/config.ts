@@ -1,4 +1,4 @@
-// Our apertium-html-tools config. deploy/deploy.sh copies it over the fork's
+// Our apertium-html-tools config. deploy/cloudflare/manage.py copies it over the fork's
 // config.ts in a temporary copy of the fork, then builds the frontend.
 //
 // config.ts is evaluated twice: by Node while building (build.ts fetches the
@@ -13,7 +13,7 @@ const building = typeof window === 'undefined';
 const buildEnv = (name: string): string => {
   const value = process.env[name];
   if (!value) {
-    throw new Error(`config.ts: set ${name} (deploy/deploy.sh does this)`);
+    throw new Error(`config.ts: set ${name} (deploy/cloudflare/manage.py does this)`);
   }
   return value;
 };

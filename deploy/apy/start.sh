@@ -2,11 +2,14 @@
 # Container entrypoint: optionally fetch the language pairs, then run APy.
 #
 # Environment (all optional):
-#   PAIRS_URL         URL of a pairs archive (.tar.zst, see deploy/pairs/build.sh),
-#                     unpacked into /usr/share/apertium before APy starts. On
-#                     Cloudflare this is http://pairs.internal/current, served by
-#                     the Worker from R2. Unset: use whatever is already in
-#                     /usr/share/apertium (e.g. a host directory mounted there).
+#   PAIRS             Language pairs to fetch, e.g. "sme-nob sme-smj". Each is
+#                     fetched from $PAIRS_URL/<pair>.tar.zst (an archive from
+#                     deploy/pairs/build.sh) and unpacked into /usr/share/apertium
+#                     before APy starts. On Cloudflare PAIRS_URL is
+#                     http://pairs.internal, served by the Worker from R2;
+#                     locally it can be file:///some/dir. Unset: use whatever is
+#                     already in /usr/share/apertium (e.g. a mounted host directory).
+#   PAIRS_URL         Where to fetch PAIRS from (required with PAIRS).
 #   APY_LLM_ENDPOINT  Overrides `endpoint` in the [LLM] section of the config.
 #   APY_CONFIG        Config file (default /etc/apertium-apy/apy.conf).
 #
@@ -16,22 +19,28 @@ set -eu
 APERTIUM_DIR=/usr/share/apertium
 config=${APY_CONFIG:-/etc/apertium-apy/apy.conf}
 
-if [ -n "${PAIRS_URL:-}" ]; then
-    echo "start.sh: fetching language pairs from $PAIRS_URL"
+if [ -n "${PAIRS:-}" ]; then
+    : "${PAIRS_URL:?PAIRS_URL must be set when PAIRS is}"
     start=$(date +%s)
-    curl -fsS --retry 5 --retry-all-errors --retry-delay 1 "$PAIRS_URL" \
-        | zstd -dc \
-        | tar -x -C "$APERTIUM_DIR" --no-same-owner --no-same-permissions
-    echo "start.sh: unpacked in $(($(date +%s) - start)) s: $(sed -n 's/^pair //p' "$APERTIUM_DIR/pairs-manifest.txt" | tr '\n' ' ')"
+    for pair in $PAIRS; do
+        curl -fsS --retry 5 --retry-all-errors --retry-delay 1 "$PAIRS_URL/$pair.tar.zst" \
+            | zstd -dc \
+            | tar -x -C "$APERTIUM_DIR" --no-same-owner --no-same-permissions
+    done
+    echo "start.sh: fetched and unpacked in $(($(date +%s) - start)) s:" \
+        "$(cat "$APERTIUM_DIR"/.manifests/*.txt | sed -n 's/^pair //p' | tr '\n' ' ')"
 
     # The compiled pair data must be readable by this image's tools. A
     # mismatch is usually harmless, but if a pair starts failing, rebuild the
-    # image (or the archive) so that the versions match again.
-    sed -n 's/^tool //p' "$APERTIUM_DIR/pairs-manifest.txt" | while read -r pkg built_with; do
-        have=$(dpkg-query -W -f '${Version}' "$pkg" 2>/dev/null || echo missing)
-        if [ "$have" != "$built_with" ]; then
-            echo "start.sh: WARNING: pairs were built with $pkg $built_with, this image has $have"
-        fi
+    # image so that the versions match again.
+    for manifest in "$APERTIUM_DIR"/.manifests/*.txt; do
+        pair=$(basename "$manifest" .txt)
+        sed -n 's/^tool //p' "$manifest" | while read -r pkg built_with; do
+            have=$(dpkg-query -W -f '${Version}' "$pkg" 2>/dev/null || echo missing)
+            if [ "$have" != "$built_with" ]; then
+                echo "start.sh: WARNING: $pair was packaged with $pkg $built_with, this image has $have"
+            fi
+        done
     done
 fi
 
