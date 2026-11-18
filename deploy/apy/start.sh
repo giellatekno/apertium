@@ -27,6 +27,12 @@ if [ -n "${PAIRS:-}" ]; then
             | zstd -dc \
             | tar -x -C "$APERTIUM_DIR" --no-same-owner --no-same-permissions
     done
+    # Some pairs also install experimental modes that APy would list as extra
+    # pairs: apertium-sme-nob ships sme-nob_rtx.mode (the same pipeline with
+    # apertium-recursive in place of the chunk transfer, giving worse output),
+    # which shows up as a target language "nob_rtx" in the frontend.
+    rm -f "$APERTIUM_DIR"/modes/*_rtx.mode
+
     echo "start.sh: fetched and unpacked in $(($(date +%s) - start)) s:" \
         "$(cat "$APERTIUM_DIR"/.manifests/*.txt | sed -n 's/^pair //p' | tr '\n' ' ')"
 
