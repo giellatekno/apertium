@@ -190,6 +190,13 @@ Worker without its required secrets, and `wrangler secret put` can't set them be
 9. Restarts APy, so it runs the new image and pairs, and restarts other deployed instances whose
    pairs got a new version.
 
+**A new image can take a few minutes to go live.** After a deploy that changes the APy image,
+check the live site for the change. If it isn't there within about five minutes, run
+`./manage.py restart <instance> <account>`. Once (2026-11-18), a restart right after the deploy
+started the old image again, while a restart five minutes later started the new one. Cloudflare
+was probably still distributing the new image. The same deploy was live at once on
+jorgal.uit.no, so this doesn't always happen.
+
 `manage.py` pushes the image itself rather than letting `wrangler` build and push it: so the
 deployed image is exactly the one the pairs and frontend were built and tested with, and because
 `wrangler` takes the image digest from the local engine. With podman behind the `docker` command,
