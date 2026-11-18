@@ -13,7 +13,7 @@ deployment-specific parts:
 | `pairs/build.sh` | Builds the archive of one language pair (`<package version>.tar.zst`) inside the APy image |
 | `cloudflare/` | The Cloudflare Worker (serves the frontend, runs APy in a container), and `manage.py` to deploy and manage it. See [Hosting on Cloudflare](#hosting-on-cloudflare-prototype) |
 | `cloudflare/manage.py` | Deploys, inspects, restarts and deletes instances; manages their R2 buckets |
-| `cloudflare/instances.toml` | The Cloudflare accounts (test, prod) and Apertium instances (`jorgal`, `tolkimine`) |
+| `cloudflare/instances.toml` | The Cloudflare accounts (test, prod) and Apertium instances (`jorgal`, `tolkimine`, `mt`) |
 
 ## Build
 
@@ -80,7 +80,7 @@ pair archives, the built frontend talking to APy through `/apy`), but **not yet 
 cannot set memory swappiness with cgroupv2`); it needs real Docker. `manage.py` doesn't use
 Docker at all: it builds with podman and pushes the image itself.
 
-Each **instance** (in `cloudflare/instances.toml`, by codename: `jorgal` for sme-nob, `tolkimine` for fin-est both ways) is one Worker, named after it, using
+Each **instance** (in `cloudflare/instances.toml`, by codename: `jorgal` for sme-nob, `tolkimine` for fin-est both ways, `mt` for sme with smj, sma and smn both ways plus sme-nob) is one Worker, named after it, using
 [Cloudflare Containers](https://developers.cloudflare.com/containers/) (Workers Paid plan):
 
 ```

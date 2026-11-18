@@ -29,3 +29,10 @@ pairs = ["sme-nob"]
 description = "Finnish and Estonian, both ways, with optional AI post-cleanup"
 # apertium-fin-est has both fin-est and est-fin (there is no apertium-est-fin)
 pairs = ["fin-est"]
+
+# Machine translation between the Sámi languages, and North Sámi to Norwegian.
+# apertium-sme-smj/-sma/-smn contain both directions; sme-sma has no plain
+# sme→sma mode, only the variants sme-sma_North and sme-sma_Mid.
+[instances.mt]
+description = "North Sámi to and from Lule, South and Inari Sámi, and North Sámi to Norwegian Bokmål"
+pairs = ["sme-smj", "sme-sma", "sme-smn", "sme-nob"]

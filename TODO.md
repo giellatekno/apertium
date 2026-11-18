@@ -70,6 +70,9 @@ image. Delete this file once everything below is done.
       `giellatekno`, so prod will be `jorgal.giellatekno.workers.dev`. Then
       `manage.py deploy jorgal prod` (the bucket and sme-nob are already there).
     - Afterwards: point the old domain (under uit.no) to the Worker; later perhaps GitHub Actions.
+    - mt (sme↔smj, sme↔sma, sme↔smn, sme→nob) deployed to test 2026-11-18, at
+      https://mt.uit-anders.workers.dev. sme→sma comes as two variants, `sma_North` and `sma_Mid`
+      (the package has no plain sme-sma mode); the frontend shows the raw codes.
     - tolkimine: language detection doesn't know fin/est (APy's fastText model); est→fin is a much
       weaker pair than fin→est.
 11. [ ] **Northern Sámi strings** for the `LLM_Post_Editing*` keys, by a native speaker (see the
