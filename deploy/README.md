@@ -139,6 +139,9 @@ cd deploy/cloudflare
 ./manage.py pairs delete   test PAIR VERSION
 ./manage.py pairs prune    test [--keep N]
 
+./manage.py usage test [--month 2026-11]  # per instance: requests, container hours, peak memory/CPU;
+                                          # estimated cost for the month (and projected)
+
 ./manage.py images list  test             # APy images in the registry, which are deployed
 ./manage.py images prune test             # delete the ones no deployed instance uses
 ```
@@ -148,6 +151,12 @@ and a login: `npx wrangler login` (once, covers both
 accounts). `manage.py` uses that login for `wrangler` and for Cloudflare's API (R2 listings,
 stats), and picks the account by setting `CLOUDFLARE_ACCOUNT_ID`. For manual `wrangler` commands,
 set it yourself (the IDs are in `instances.toml`), or `wrangler` asks which account to use.
+
+**`usage`** reads Cloudflare's analytics, which go back about a month, and estimates costs at list
+prices: container memory, CPU and disk are billed for the time a container runs, at the size in
+`APY_RESOURCES` (`src/index.ts`). It counts only Apertium's usage: other projects' containers and
+buckets in the same account are left out, although they share the plan's included amounts. The
+actual invoice is in the dashboard (Manage Account → Billing); `wrangler`'s login can't read it.
 
 **Secrets:** `deploy/cloudflare/secrets.<account>.env` (gitignored, `chmod 600`) holds the Worker's
 secrets for that account. The first `deploy` asks for the LLM gateway key and generates the

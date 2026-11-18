@@ -25,6 +25,8 @@ unless a pair is rolled back.
     manage.py pairs delete   test PAIR VERSION   delete an old version
     manage.py pairs prune    test [--keep N]     delete old versions
 
+    manage.py usage test [--month 2026-11]       requests, container use and estimated costs
+
     manage.py images list  test                  APy images in the account's registry
     manage.py images prune test                  delete the images no deployed instance uses
 
@@ -1141,6 +1143,202 @@ def cmd_pairs(args, accounts: dict[str, Account], instances: dict[str, Instance]
             delete_pair_version(api, pair, version)
 
 
+# ------------------------------------------------------------------ usage ---
+
+# Cloudflare's list prices (USD), from developers.cloudflare.com, 2026-11. The
+# included amounts are per account and month, on the Workers Paid plan.
+PLAN_PER_MONTH = 5.00
+PRICES = {
+    # name: (unit price, included per month, unit)
+    "container_memory": (0.0000025, 25 * 3600, "GiB-s"),       # 25 GiB-hours
+    "container_cpu": (0.000020, 375 * 60, "vCPU-s"),           # 375 vCPU-minutes
+    "container_disk": (0.00000007, 200 * 3600, "GB-s"),        # 200 GB-hours
+    "container_egress": (0.025, 1000, "GB"),                   # North America and Europe
+    "worker_requests": (0.30 / 1e6, 10e6, "requests"),
+    "worker_cpu": (0.02 / 1e6, 30e6, "CPU-ms"),
+    "do_requests": (0.15 / 1e6, 1e6, "requests"),
+    "r2_storage": (0.015, 10, "GB-month"),
+    "r2_class_a": (4.50 / 1e6, 1e6, "operations"),
+    "r2_class_b": (0.36 / 1e6, 10e6, "operations"),
+}
+R2_CLASS_A = ("Put", "Copy", "List", "Create", "Upload", "Complete")
+R2_CLASS_B = ("Get", "Head")
+
+
+def container_memory_mib() -> int:
+    """The container's memory, from APY_RESOURCES in src/index.ts."""
+    match = re.search(r"APY_RESOURCES\s*=\s*\{[^}]*memoryMib:\s*(\d+)", (HERE / "src/index.ts").read_text())
+    return int(match.group(1)) if match else 2048
+
+
+# Cloudflare's analytics go back about a month ("cannot request data older than 4w4d")
+ANALYTICS_RETENTION = dt.timedelta(days=31)
+
+
+def month_bounds(month: str | None) -> tuple[dt.datetime, dt.datetime, float]:
+    """(since, until, fraction of the month that this covers).
+
+    The current month is covered up to now; a month that's partly older than
+    Cloudflare keeps analytics for is covered from that point."""
+    now = dt.datetime.now(dt.timezone.utc)
+    if month:
+        try:
+            start = dt.datetime.strptime(month, "%Y-%m").replace(tzinfo=dt.timezone.utc)
+        except ValueError:
+            raise Fail(f"--month: expected YYYY-MM, got {month!r}") from None
+    else:
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    end = (start + dt.timedelta(days=32)).replace(day=1)
+    if start > now:
+        raise Fail(f"{month} hasn't started yet")
+    since, until = max(start, now - ANALYTICS_RETENTION), min(end, now)
+    if since >= until:
+        raise Fail(f"Cloudflare keeps analytics for about a month only; {month} is too old")
+    return since, until, (until - since) / (end - start)
+
+
+USAGE_QUERY = """query($account: String!, $since: Time!, $until: Time!) {
+  viewer { accounts(filter: {accountTag: $account}) {
+    workers: workersInvocationsAdaptive(limit: 10000, filter: {datetime_geq: $since, datetime_lt: $until}) {
+      dimensions { scriptName } sum { requests errors cpuTimeUs } }
+    assets: workersAssetsRequestsAdaptiveGroups(limit: 10000, filter: {datetime_geq: $since, datetime_lt: $until}) {
+      dimensions { hostname } sum { requests } }
+    containers: containersUsageAdaptiveGroups(limit: 10000, filter: {datetime_geq: $since, datetime_lt: $until}) {
+      dimensions { applicationId } sum { allocatedMemory allocatedDisk cpuTimeSec txBytes } }
+    peaks: containersMetricsAdaptiveGroups(limit: 10000, filter: {datetime_geq: $since, datetime_lt: $until}) {
+      dimensions { applicationId } max { memory cpuUtilization } }
+    durableObjects: durableObjectsInvocationsAdaptiveGroups(limit: 10000, filter: {datetime_geq: $since, datetime_lt: $until}) {
+      dimensions { scriptName } sum { requests } }
+    r2Storage: r2StorageAdaptiveGroups(limit: 10000, filter: {datetime_geq: $since, datetime_lt: $until}) {
+      dimensions { bucketName } max { payloadSize objectCount } }
+    r2Operations: r2OperationsAdaptiveGroups(limit: 10000, filter: {datetime_geq: $since, datetime_lt: $until}) {
+      dimensions { bucketName actionType } sum { requests } }
+  } } }"""
+
+
+def cmd_usage(args, accounts: dict[str, Account], instances: dict[str, Instance]) -> None:
+    account = accounts[args.account]
+    api = CloudflareAPI(account)
+    since, until, covered = month_bounds(args.month)
+    data = api.graphql(USAGE_QUERY, {
+        "account": account.id,
+        "since": since.strftime("%Y-%m-%dT%H:%M:%SZ"), "until": until.strftime("%Y-%m-%dT%H:%M:%SZ")})
+    data = data["viewer"]["accounts"][0]
+
+    def by(rows: list[dict], key: str) -> dict:
+        return {r["dimensions"][key]: r for r in rows}
+
+    workers, assets = by(data["workers"], "scriptName"), by(data["assets"], "hostname")
+    usage = {r["dimensions"]["applicationId"].replace("-", ""): r["sum"] for r in data["containers"]}
+    peaks = {r["dimensions"]["applicationId"].replace("-", ""): r["max"] for r in data["peaks"]}
+    do_requests = {r["dimensions"]["scriptName"]: r["sum"]["requests"] for r in data["durableObjects"]}
+    problem = api.containers_problem()
+    apps = {} if problem else {a["name"]: a["id"].replace("-", "") for a in wrangler_json(account, "containers", "list")}
+    memory_mib = container_memory_mib()
+
+    def quantities(container: dict, worker: dict | None, dos: int) -> dict[str, float]:
+        return {
+            "container_memory": container.get("allocatedMemory", 0) / 2**30,
+            "container_cpu": container.get("cpuTimeSec", 0),
+            "container_disk": container.get("allocatedDisk", 0) / 1e9,
+            "container_egress": container.get("txBytes", 0) / 1e9,
+            "worker_requests": (worker or {}).get("requests", 0),
+            "worker_cpu": (worker or {}).get("cpuTimeUs", 0) / 1000,
+            "do_requests": dos,
+        }
+
+    def cost(q: dict[str, float]) -> float:  # before the included amounts
+        return sum(PRICES[k][0] * v for k, v in q.items())
+
+    month = (args.month or since.strftime("%Y-%m"))
+    period = f"{since:%Y-%m-%d %H:%M} to {until:%Y-%m-%d %H:%M} UTC"
+    so_far = "whole month" if covered >= 1 else f"{period}, {covered:.0%} of the month"
+    info(f"{account.key} ({account.name}), {month}: {so_far} (container memory {memory_mib} MiB)")
+    if since.day != 1 or since.hour or since.minute:
+        info("Note: Cloudflare keeps analytics for about a month, so this starts later than the month does.")
+    if problem:
+        info(f"Note: this account can't run containers yet: {problem}")
+
+    totals: dict[str, float] = {k: 0.0 for k in PRICES}
+    header = f"{'instance':<20}{'files':>8}{'API req':>9}{'errors':>8}{'running':>10}{'peak mem':>10}{'peak CPU':>10}{'cost':>9}"
+    info(f"\n{header}")
+    rows = []
+    seen_apps = set()
+    for instance in instances.values():
+        app_id = next((i for n, i in apps.items() if n.startswith(f"{instance.worker}-")), None)
+        seen_apps.add(app_id)
+        container, peak = usage.get(app_id or "", {}), peaks.get(app_id or "", {})
+        worker = workers.get(instance.worker, {}).get("sum")
+        files = sum(r["sum"]["requests"] for h, r in assets.items() if h.split(".")[0] == instance.worker)
+        rows.append((instance.name, files, worker, container, peak, do_requests.get(instance.worker, 0)))
+    # Containers of deleted or renamed instances still cost what they used. The
+    # account may also run other projects' containers: those are left out.
+    names = {i: n for n, i in apps.items()}
+    others = []
+    for app_id, container in usage.items():
+        if app_id in seen_apps:
+            continue
+        if app_id in names and not names[app_id].endswith("-apy"):
+            others.append(names[app_id])
+        else:
+            label = names.get(app_id) or f"(deleted {app_id[:8]})"
+            rows.append((label, 0, None, container, peaks.get(app_id, {}), 0))
+
+    for name, files, worker, container, peak, dos in rows:
+        q = quantities(container, worker, dos)
+        for k, v in q.items():
+            totals[k] += v
+        hours = container.get("allocatedMemory", 0) / (memory_mib * 2**20) / 3600
+        mem = f"{peak['memory'] / 2**20:.0f} MiB" if peak.get("memory") else "-"
+        cpu = f"{peak['cpuUtilization'] * 100:.0f}%" if peak.get("cpuUtilization") is not None and peak else "-"
+        w = worker or {}
+        info(f"{name:<20}{files:>8}{w.get('requests', 0):>9}{w.get('errors', 0):>8}"
+             f"{hours:>9.1f}h{mem:>10}{cpu:>10}{'$%.2f' % cost(q):>9}")
+    info("(files: static file requests, i.e. page loads and their scripts and images; API req: /apy/*;\n"
+         " running: container hours; cost: before the included amounts; deleted: containers that\n"
+         " no longer exist, e.g. of renamed or deleted instances)")
+    if others:
+        info(f"Not counted (other projects' containers in this account): {', '.join(sorted(set(others)))}")
+
+    # R2: the shared pairs bucket only
+    stored = sum(r["max"]["payloadSize"] for r in data["r2Storage"] if r["dimensions"]["bucketName"] == BUCKET)
+    for r in data["r2Operations"]:
+        if r["dimensions"]["bucketName"] != BUCKET:
+            continue
+        action = r["dimensions"]["actionType"]
+        if action.startswith(R2_CLASS_A):
+            totals["r2_class_a"] += r["sum"]["requests"]
+        elif action.startswith(R2_CLASS_B):
+            totals["r2_class_b"] += r["sum"]["requests"]
+    totals["r2_storage"] = stored / 1e9 * covered  # GB-months so far, at the current size
+    info(f"\nR2 bucket {BUCKET}: {human_size(stored)} stored, "
+         f"{totals['r2_class_a']:.0f} class A and {totals['r2_class_b']:.0f} class B operations")
+
+    def bill(q: dict[str, float]) -> tuple[float, list[str]]:
+        lines, total = [], PLAN_PER_MONTH
+        for k, v in q.items():
+            price, included, unit = PRICES[k]
+            charged = max(0.0, v - included) * price
+            total += charged
+            if v:
+                lines.append(f"  {k:<18}{v:>12,.0f} {unit:<11}{'included %s' % f'{included:,.0f}':>22}{'$%.2f' % charged:>9}")
+        return total, lines
+
+    total, lines = bill(totals)
+    info(f"\nEstimate for {month}, {so_far}: the Workers Paid plan (${PLAN_PER_MONTH:.2f}) plus Apertium's usage\n"
+         f"beyond what the plan includes (other projects in the account share the included amounts):")
+    for line in lines:
+        info(line)
+    info(f"  {'total':<18}{'':>45}{'$%.2f' % total:>9}")
+    if covered < 1:
+        projected, _ = bill({k: v / covered for k, v in totals.items()})
+        info(f"Projected for the whole month, at the same rate as {period}: ${projected:.2f}")
+    if problem:
+        info("(This account isn't on Workers Paid yet; the estimate is what it would cost on it.)")
+    info("(List prices; the actual invoice is in the dashboard, under Manage Account -> Billing. "
+         "Not included: Durable Object duration, Workers Logs, taxes.)")
+
+
 def delete_image_tag(account: Account, repository: str, tag: str) -> None:
     result = wrangler(account, "containers", "images", "delete", f"{repository}:{tag}",
                       capture=True, quiet=True, check=False)
@@ -1261,6 +1459,12 @@ def main() -> int:
         if action in ("rollback", "delete", "prune"):
             sp.add_argument("-y", "--yes", action="store_true")
 
+    p = sub.add_parser("usage", help="requests, container use and estimated costs for an account",
+                       description="Requests, container use and estimated costs for a month, per instance "
+                                   "and for the account (from Cloudflare's analytics; list prices).")
+    p.add_argument("account", choices=sorted(accounts), help="Cloudflare account")
+    p.add_argument("--month", help="YYYY-MM (default: this month, so far, with a projection)")
+
     p = sub.add_parser("images", help="APy images in the account's Cloudflare registry",
                        description="APy images: each deploy pushes one to <instance>-apy in the registry.")
     images_sub = p.add_subparsers(dest="action", required=True)
@@ -1279,6 +1483,8 @@ def main() -> int:
             cmd_pairs(args, accounts, instances)
         elif args.command == "images":
             cmd_images(args, accounts, instances)
+        elif args.command == "usage":
+            cmd_usage(args, accounts, instances)
         elif args.command in ("deploy", "delete"):
             {"deploy": cmd_deploy, "delete": cmd_delete}[args.command](
                 args, accounts[args.account], instances[args.instance], instances)
@@ -1291,6 +1497,9 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\nInterrupted.", file=sys.stderr)
         return 130
+    except BrokenPipeError:  # e.g. `manage.py usage test | head`
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 0
     return 0
 
 
