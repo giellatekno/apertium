@@ -180,8 +180,8 @@ Worker without its required secrets, and `wrangler secret put` can't set them be
 4. Brings each of the instance's pairs to the newest version (below): builds the archive with
    `pairs/build.sh`, uploads it and makes it current, if R2 doesn't have it yet.
 5. Starts the image locally with those pairs and builds the frontend against it (the fork's
-   committed `HEAD` with `html-tools/config.ts`), plus `build-info.json` recording the instance,
-   pair versions and commits.
+   committed `HEAD` with `html-tools/config.ts`, and an `instance.json` with the instance's
+   `llm_pairs`), plus `build-info.json` recording the instance, pair versions and commits.
 6. Pushes the APy image from step 1 to the account's Cloudflare registry
    (`<instance>-apy`), noting the digest the registry received, and records it in `build-info.json`.
 7. Writes `.build/<instance>/wrangler.json`: `wrangler.jsonc` with the instance's Worker name,
@@ -238,6 +238,11 @@ and `https://jorgal.uit.no/`: the setup and nginx config are under "gtweb.uit.no
 (`html-tools/config.ts`), so it works under any path. A whole hostname needs its own certificate.
 
 ## LLM models
+
+**Which pairs offer it:** the frontend's "Post-cleanup with AI" toggle appears only for an
+instance's `llm_pairs` in `instances.toml`, e.g. not for directions into a Sámi language. With no
+`llm_pairs`, it appears nowhere. This only hides the toggle; APy's `/translateLLM` itself still
+accepts every pair.
 
 `/translateLLM` goes through UiT's Azure OpenAI gateway. The `model` setting in `[LLM]` is the
 Azure **deployment name**, which goes into the URL. It's chosen by whoever set up the deployment,

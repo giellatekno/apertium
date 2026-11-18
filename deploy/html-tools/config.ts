@@ -9,6 +9,8 @@
 // Worker it's /apy, behind a proxy at https://gtweb.uit.no/jorgal/ it's
 // /jorgal/apy (the proxy must redirect /jorgal to /jorgal/).
 import { Config, Mode } from './src/types';
+// Written by manage.py from the instance's settings in instances.toml
+import instance from './instance.json';
 
 const building = typeof window === 'undefined';
 
@@ -31,8 +33,9 @@ export default {
   enabledModes: new Set([Mode.Translation]),
   translationChaining: false,
 
-  // "Post-cleanup with AI": /translateLLM, see deploy/README.md
-  llmPostEditing: { model: 'GPT-4.1 mini' },
+  // "Post-cleanup with AI": /translateLLM, see deploy/README.md. Only for the
+  // instance's llm_pairs (instances.toml).
+  llmPostEditing: { model: 'GPT-4.1 mini', pairs: instance.llmPairs },
 
   stringReplacements: {
     '{{maintainer}}': "<a href='https://giellatekno.uit.no/' target='_blank' rel='noopener'>Giellatekno</a>",

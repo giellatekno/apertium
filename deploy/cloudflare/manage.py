@@ -92,6 +92,7 @@ class Instance:
     name: str
     description: str
     pairs: list[str]
+    llm_pairs: list[str]  # directions that offer AI post-editing in the frontend
 
     @property
     def worker(self) -> str:
@@ -115,7 +116,7 @@ def load_config() -> tuple[dict[str, Account], dict[str, Instance]]:
         for key, a in raw["accounts"].items()
     }
     instances = {
-        name: Instance(name, i.get("description", ""), list(i["pairs"]))
+        name: Instance(name, i.get("description", ""), list(i["pairs"]), list(i.get("llm_pairs", [])))
         for name, i in raw["instances"].items()
     }
     return accounts, instances
@@ -627,7 +628,12 @@ def build_frontend(instance: Instance, account: Account, archives: dict[str, tup
         try:
             port = run([ENGINE, "port", container, "2737"], capture=True, quiet=True).stdout.split()[0].rsplit(":", 1)[1]
             apy = f"http://127.0.0.1:{port}"
-            info(f"Local APy serves: {' '.join(wait_for_apy(apy, container))}")
+            served = wait_for_apy(apy, container)
+            info(f"Local APy serves: {' '.join(served)}")
+            unknown = [p for p in instance.llm_pairs if p not in served]
+            if unknown:
+                raise Fail(f"llm_pairs in instances.toml has directions that {instance.name} doesn't serve: "
+                           f"{', '.join(unknown)}")
 
             src = Path(tmp) / "html-tools"
             src.mkdir()
@@ -636,6 +642,8 @@ def build_frontend(instance: Instance, account: Account, archives: dict[str, tup
                                      check=True, capture_output=True).stdout
             subprocess.run(["tar", "-x", "-C", str(src)], input=tarball, check=True)
             shutil.copy(ROOT / "deploy/html-tools/config.ts", src / "config.ts")
+            # Per-instance settings, imported by our config.ts
+            (src / "instance.json").write_text(json.dumps({"llmPairs": instance.llm_pairs}) + "\n")
             node_modules = ROOT / "apertium-html-tools/node_modules"
             if node_modules.is_dir():
                 (src / "node_modules").symlink_to(node_modules)
@@ -655,6 +663,7 @@ def build_frontend(instance: Instance, account: Account, archives: dict[str, tup
         "instance": instance.name,
         "account": account.key,
         "pairs": {pair: version for pair, (version, _) in archives.items()},
+        "llm_pairs": instance.llm_pairs,
         "apertium-apy": git_rev(ROOT / "apertium-apy"),
         "apertium-html-tools": git_rev(ROOT / "apertium-html-tools"),
         "apertium": git_rev(ROOT),
@@ -883,6 +892,7 @@ def cmd_list(args, accounts: dict[str, Account], instances: dict[str, Instance])
     for instance in instances.values():
         info(f"{instance.name}: {instance.description}")
         info(f"  pairs: {', '.join(instance.pairs)}")
+        info(f"  AI post-editing: {', '.join(instance.llm_pairs) or 'none'}")
         for key, api in apis.items():
             try:
                 where = (api.worker_url(instance) or "deployed") if instance.worker in api.workers else "not deployed"

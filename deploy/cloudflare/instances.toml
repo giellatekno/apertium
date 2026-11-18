@@ -19,16 +19,22 @@ name = "Giellatekno"
 # (apertium-pairs), shared by all instances, always at the newest version unless
 # rolled back (`manage.py pairs`). Changing an instance's pairs needs a deploy,
 # since the frontend's language menus are built from them.
+#
+# `llm_pairs` are the directions (as APy lists them, e.g. "sme-nob") for which
+# the frontend offers "Post-cleanup with AI"; leave it out for none. Changing it
+# needs a deploy too.
 
 # "jorgal" is North Sámi for "translate"
 [instances.jorgal]
 description = "North Sámi to Norwegian Bokmål, with optional AI post-cleanup"
 pairs = ["sme-nob"]
+llm_pairs = ["sme-nob"]
 
 [instances.tolkimine]
 description = "Finnish and Estonian, both ways, with optional AI post-cleanup"
 # apertium-fin-est has both fin-est and est-fin (there is no apertium-est-fin)
 pairs = ["fin-est"]
+llm_pairs = ["fin-est", "est-fin"]
 
 # Machine translation between the Sámi languages, and North Sámi to Norwegian.
 # apertium-sme-smj/-sma/-smn contain both directions; sme-sma has no plain
@@ -36,3 +42,5 @@ pairs = ["fin-est"]
 [instances.mt]
 description = "North Sámi to and from Lule, South and Inari Sámi, and North Sámi to Norwegian Bokmål"
 pairs = ["sme-smj", "sme-sma", "sme-smn", "sme-nob"]
+# Not for the directions into a Sámi language
+llm_pairs = ["sme-nob"]
