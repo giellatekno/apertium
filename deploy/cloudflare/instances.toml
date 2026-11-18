@@ -10,13 +10,22 @@ name = "UiT / Anders Lorentsen"
 id = "e2bfaf09d6fa661780cb33620a17f1cf"
 name = "Giellatekno"
 
-# Apertium instances. Each one is, in every account it's deployed to, its own
-# Worker (apertium-<instance>) with an APy container and the frontend. `pairs`
-# are the language pairs it serves (`manage.py pairs list-available` lists
-# them; package apertium-<pair>). The pairs themselves live in one R2 bucket
-# per account (apertium-pairs), shared by all instances, always at the newest
-# version unless rolled back (`manage.py pairs`). Changing an instance's pairs
-# needs a deploy, since the frontend's language menus are built from them.
-[instances.sme-nob]
+# Apertium instances, by codename. Each one is, in every account it's deployed
+# to, its own Worker named after the instance (<instance>.<subdomain>.workers.dev),
+# with an APy container and the frontend. Use names that no other Worker in the
+# accounts has. `pairs` are the language pairs it serves (`manage.py pairs
+# list-available` lists them; package apertium-<pair>, which often contains both
+# directions). The pairs themselves live in one R2 bucket per account
+# (apertium-pairs), shared by all instances, always at the newest version unless
+# rolled back (`manage.py pairs`). Changing an instance's pairs needs a deploy,
+# since the frontend's language menus are built from them.
+
+# "jorgal" is North Sámi for "translate"
+[instances.jorgal]
 description = "North Sámi to Norwegian Bokmål, with optional AI post-cleanup"
 pairs = ["sme-nob"]
+
+[instances.tolkimine]
+description = "Finnish and Estonian, both ways, with optional AI post-cleanup"
+# apertium-fin-est has both fin-est and est-fin (there is no apertium-est-fin)
+pairs = ["fin-est"]

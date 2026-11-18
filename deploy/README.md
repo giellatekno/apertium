@@ -13,7 +13,7 @@ deployment-specific parts:
 | `pairs/build.sh` | Builds the archive of one language pair (`<package version>.tar.zst`) inside the APy image |
 | `cloudflare/` | The Cloudflare Worker (serves the frontend, runs APy in a container), and `manage.py` to deploy and manage it. See [Hosting on Cloudflare](#hosting-on-cloudflare-prototype) |
 | `cloudflare/manage.py` | Deploys, inspects, restarts and deletes instances; manages their R2 buckets |
-| `cloudflare/instances.toml` | The Cloudflare accounts (test, prod) and Apertium instances (e.g. `sme-nob`) |
+| `cloudflare/instances.toml` | The Cloudflare accounts (test, prod) and Apertium instances (`jorgal`, `tolkimine`) |
 
 ## Build
 
@@ -80,11 +80,11 @@ pair archives, the built frontend talking to APy through `/apy`), but **not yet 
 cannot set memory swappiness with cgroupv2`); it needs real Docker. Deploying doesn't use Docker:
 `manage.py` pushes the image itself.
 
-Each **instance** (in `cloudflare/instances.toml`, e.g. `sme-nob`) is one Worker, using
+Each **instance** (in `cloudflare/instances.toml`, by codename: `jorgal` for sme-nob, `tolkimine` for fin-est both ways) is one Worker, named after it, using
 [Cloudflare Containers](https://developers.cloudflare.com/containers/) (Workers Paid plan):
 
 ```
-browser ──▶ Worker apertium-<instance>
+browser ──▶ Worker <instance>.<subdomain>.workers.dev
              ├─ /*             static assets: the frontend build
              ├─ /apy/*         Durable Object "apy-0" ──▶ APy container (port 2737)
              └─ /admin/restart restart APy (bearer token)
@@ -124,11 +124,11 @@ type the instance name, `pairs delete-bucket` to type "yes, delete the bucket"; 
 ```sh
 cd deploy/cloudflare
 ./manage.py list                          # instances, and where they're deployed
-./manage.py deploy  sme-nob test          # build and deploy; asks which pairs (--dry-run to try)
-./manage.py status  sme-nob test          # deployed build, container, its pairs, request stats
-./manage.py logs    sme-nob test          # live logs
-./manage.py restart sme-nob test          # restart APy
-./manage.py delete  sme-nob test          # Worker and container (--with-bucket: also the pairs bucket)
+./manage.py deploy  jorgal test           # build and deploy (--dry-run to try)
+./manage.py status  jorgal test           # deployed build, container, its pairs, request stats
+./manage.py logs    jorgal test           # live logs
+./manage.py restart jorgal test           # restart APy
+./manage.py delete  jorgal test           # Worker, container, images (--with-bucket: also the pairs bucket)
 
 ./manage.py pairs create-bucket test      # the account's apertium-pairs bucket (deploy also creates it)
 ./manage.py pairs delete-bucket test      # with all pairs; you must type "yes, delete the bucket"
@@ -138,6 +138,9 @@ cd deploy/cloudflare
 ./manage.py pairs rollback test PAIR [VERSION]
 ./manage.py pairs delete   test PAIR VERSION
 ./manage.py pairs prune    test [--keep N]
+
+./manage.py images list  test             # APy images in the registry, which are deployed
+./manage.py images prune test             # delete the ones no deployed instance uses
 ```
 
 `./manage.py <command> --help` lists the options. Requirements: Node.js, podman (or `ENGINE=docker`),
@@ -171,7 +174,7 @@ Worker without its required secrets, and `wrangler secret put` can't set them be
    committed `HEAD` with `html-tools/config.ts`), plus `build-info.json` recording the instance,
    pair versions and commits.
 6. Pushes the APy image from step 1 to the account's Cloudflare registry
-   (`apertium-<instance>-apy`), noting the digest the registry received.
+   (`<instance>-apy`), noting the digest the registry received, and records it in `build-info.json`.
 7. Writes `.build/<instance>/wrangler.json`: `wrangler.jsonc` with the instance's Worker name,
    pairs (`PAIRS`), frontend, and that image pinned by digest.
 8. `wrangler deploy`: deploys the Worker, the frontend and the container with that image.

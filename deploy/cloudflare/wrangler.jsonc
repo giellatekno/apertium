@@ -6,7 +6,7 @@
 // directory set, and deploys that. `wrangler types` reads this file directly.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "apertium-template",  // manage.py: apertium-<instance>
+  "name": "apertium-template",  // manage.py: the instance name
   "main": "src/index.ts",
   "compatibility_date": "2026-11-17",
   "observability": { "enabled": true },

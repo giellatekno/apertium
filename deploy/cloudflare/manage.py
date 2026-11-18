@@ -2,18 +2,19 @@
 """Manage Giellatekno's Apertium instances on Cloudflare.
 
 An *instance* (instances.toml) is one Apertium deployment: a Worker named
-apertium-<instance> serving the frontend, with an APy container. Language
+after the instance (<instance>.<subdomain>.workers.dev) serving the frontend,
+with an APy container. Language
 pairs live in one R2 bucket per account (apertium-pairs), shared by all
 instances: one archive per pair and package version, plus a `current` pointer
 per pair. Pairs are kept at the newest version from the Apertium apt repo,
 unless a pair is rolled back.
 
     manage.py list                               instances, and where they're deployed
-    manage.py deploy  sme-nob test               build and deploy an instance
-    manage.py status  sme-nob test [--days 7]    what's deployed, its pairs, request stats
-    manage.py logs    sme-nob test               live logs (wrangler tail)
-    manage.py restart sme-nob test               restart APy (it then loads the current pairs)
-    manage.py delete  sme-nob test               delete the Worker and its container
+    manage.py deploy  jorgal test                build and deploy an instance
+    manage.py status  jorgal test  [--days 7]    what's deployed, its pairs, request stats
+    manage.py logs    jorgal test                live logs (wrangler tail)
+    manage.py restart jorgal test                restart APy (it then loads the current pairs)
+    manage.py delete  jorgal test                delete the Worker and its container
 
     manage.py pairs create-bucket test           create the account's pairs bucket
     manage.py pairs delete-bucket test           delete it, with all pairs (asks you to type a phrase)
@@ -23,6 +24,9 @@ unless a pair is rolled back.
     manage.py pairs rollback test PAIR [VERSION] point a pair back to an older version
     manage.py pairs delete   test PAIR VERSION   delete an old version
     manage.py pairs prune    test [--keep N]     delete old versions
+
+    manage.py images list  test                  APy images in the account's registry
+    manage.py images prune test                  delete the images no deployed instance uses
 
 Run `manage.py <command> --help` for options. Needs Python 3.11+, Node.js
 (npx), podman (or ENGINE=docker), and `npx wrangler login`. See deploy/README.md.
@@ -89,7 +93,12 @@ class Instance:
 
     @property
     def worker(self) -> str:
-        return f"apertium-{self.name}"
+        return self.name
+
+    @property
+    def repository(self) -> str:
+        """The APy image's repository in the account's Cloudflare registry."""
+        return f"{self.name}-apy"
 
     @property
     def build_dir(self) -> Path:
@@ -178,6 +187,32 @@ def run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None =
     return result
 
 
+def parse_wrangler_json(stdout: str) -> object:
+    """The JSON in wrangler's output. In a terminal, some commands print progress
+    lines ("├ Listing", "│") before it, so parse from the first line that starts
+    a JSON array or object."""
+    lines = stdout.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith(("[", "{")):
+            return json.loads("\n".join(lines[i:]))
+    raise json.JSONDecodeError("no JSON in wrangler's output", stdout, 0)
+
+
+def wrangler_json(account: "Account | None", *args: str) -> object:
+    """Runs a wrangler command with --json output; retries once if there's no JSON."""
+    for attempt in (1, 2):
+        result = wrangler(account, *args, "--json", capture=True, quiet=True, check=False)
+        try:
+            if result.returncode == 0:
+                return parse_wrangler_json(result.stdout)
+        except json.JSONDecodeError:
+            pass
+        if attempt == 1:
+            time.sleep(2)
+    output = (result.stdout + result.stderr).strip()[-1000:] or "(no output)"
+    raise Fail(f"`wrangler {' '.join(args)} --json` failed (exit {result.returncode}):\n{output}")
+
+
 def ensure_node_modules() -> None:
     if not (HERE / "node_modules").is_dir():
         run(["npm", "install", "--silent"], cwd=HERE)
@@ -204,8 +239,7 @@ class CloudflareAPI:
     @property
     def token(self) -> str:
         if self._token is None:
-            out = wrangler(None, "auth", "token", "--json", capture=True, quiet=True).stdout
-            self._token = json.loads(out)["token"]
+            self._token = wrangler_json(None, "auth", "token")["token"]
         return self._token
 
     def request(self, method: str, path: str, *, params: dict | None = None,
@@ -271,8 +305,7 @@ class CloudflareAPI:
             return match.group(1).strip() if match else str(e)
 
     def container_apps(self, instance: Instance) -> list[dict]:
-        listing = wrangler(self.account, "containers", "list", "--json", capture=True, quiet=True, check=False)
-        apps = json.loads(listing.stdout or "[]") if listing.returncode == 0 else []
+        apps = wrangler_json(self.account, "containers", "list")
         return [a for a in apps if a.get("name", "").startswith(f"{instance.worker}-")]
 
     # R2
@@ -516,11 +549,9 @@ def push_image(account: Account, instance: Instance) -> str:
     fails ("The image is invalid or does not exist in this account").
     """
     step("Pushing the APy image to Cloudflare's registry")
-    creds = json.loads(wrangler(account, "containers", "registries", "credentials", "registry.cloudflare.com",
-                                "--push", "--pull", "--expiration-minutes", "15", "--json",
-                                capture=True, quiet=True).stdout)
+    creds = registry_credentials(account, push=True)
     registry = creds["registry_host"]
-    repository = f"{registry}/{account.id}/{instance.worker}-apy"
+    repository = f"{registry}/{account.id}/{instance.repository}"
     tag = f"{repository}:{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{git_rev(ROOT)}"
     with tempfile.TemporaryDirectory() as tmp:
         auth, digest_file = Path(tmp) / "auth.json", Path(tmp) / "digest"
@@ -536,6 +567,41 @@ def push_image(account: Account, instance: Instance) -> str:
     image = f"{repository}@{digest}"
     info(f"Pushed {image}")
     return image
+
+
+def registry_credentials(account: Account, push: bool = False) -> dict:
+    flags = ["--push", "--pull"] if push else ["--pull"]
+    return wrangler_json(account, "containers", "registries", "credentials", "registry.cloudflare.com",
+                         *flags, "--expiration-minutes", "15")
+
+
+def registry_images(account: Account) -> dict[str, list[str]]:
+    """Repository -> tags in the account's Cloudflare registry."""
+    return {i["name"]: list(i.get("tags", [])) for i in wrangler_json(account, "containers", "images", "list")}
+
+
+def registry_digest(account: Account, creds: dict, repository: str, tag: str) -> str | None:
+    """The manifest digest a tag points to."""
+    import base64
+    auth = base64.b64encode(f"{creds['username']}:{creds['password']}".encode()).decode()
+    req = urllib.request.Request(
+        f"https://{creds['registry_host']}/v2/{account.id}/{repository}/manifests/{tag}", method="HEAD",
+        headers={"Authorization": f"Basic {auth}", "Accept": ", ".join([
+            "application/vnd.oci.image.manifest.v1+json", "application/vnd.oci.image.index.v1+json",
+            "application/vnd.docker.distribution.manifest.v2+json",
+            "application/vnd.docker.distribution.manifest.list.v2+json"])})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.headers.get("Docker-Content-Digest")
+    except urllib.error.HTTPError:
+        return None
+
+
+def deployed_image(api: CloudflareAPI, instance: Instance) -> str | None:
+    """The image the deployed instance runs (from its /build-info.json), or None."""
+    url = api.worker_url(instance)
+    build = fetch_json(f"{url}/build-info.json") if url and instance.worker in api.workers else None
+    return (build or {}).get("image")
 
 
 def git_rev(path: Path) -> str:
@@ -790,7 +856,10 @@ def cmd_deploy(args, account: Account, instance: Instance, instances: dict[str, 
             wrangler(account, "deploy", "--config", str(config), "--dry-run", "--outdir", tmp)
         return
 
-    config = wrangler_config(instance, image=push_image(account, instance))
+    image = push_image(account, instance)
+    build_info = instance.build_dir / "dist" / "build-info.json"
+    build_info.write_text(json.dumps({**json.loads(build_info.read_text()), "image": image}, indent=2) + "\n")
+    config = wrangler_config(instance, image=image)
     step(f"Deploying the Worker {instance.worker}")
     wrangler(account, "deploy", "--config", str(config), "--secrets-file", str(secrets_path))
 
@@ -929,8 +998,10 @@ def cmd_delete(args, account: Account, instance: Instance, instances: dict[str, 
     if with_bucket and others:
         raise Fail(f"--with-bucket: other instances in {account.key} still use {BUCKET}: {', '.join(others)}")
 
+    tags = registry_images(account).get(instance.repository, [])
     targets = ([f"Worker {instance.worker} (and its Durable Object)"] if has_worker else []) + \
               [f"container application {a['name']}" for a in apps] + \
+              ([f"{len(tags)} APy image tags in the registry ({instance.repository})"] if tags else []) + \
               ([f"R2 bucket {BUCKET} with all language pairs (asks separately)"] if with_bucket else [])
     if not targets:
         info(f"Nothing of {instance.name} exists in {account.key}.")
@@ -946,6 +1017,8 @@ def cmd_delete(args, account: Account, instance: Instance, instances: dict[str, 
     # Deleting the Worker may leave its container application behind
     for app in api.container_apps(instance):
         wrangler(account, "containers", "delete", app["id"])
+    for tag in tags:
+        delete_image_tag(account, instance.repository, tag)
     if with_bucket:
         delete_bucket(account, CloudflareAPI(account), instances)
     elif api.bucket_exists():
@@ -1066,6 +1139,59 @@ def cmd_pairs(args, accounts: dict[str, Account], instances: dict[str, Instance]
             delete_pair_version(api, pair, version)
 
 
+def delete_image_tag(account: Account, repository: str, tag: str) -> None:
+    result = wrangler(account, "containers", "images", "delete", f"{repository}:{tag}",
+                      capture=True, quiet=True, check=False)
+    if result.returncode == 0:
+        info(f"Deleted {repository}:{tag}")
+    else:
+        # Tags sharing a digest go together: deleting one deletes the image
+        warn(f"{repository}:{tag}: {(result.stderr or result.stdout).strip().splitlines()[-1:]}")
+
+
+def cmd_images(args, accounts: dict[str, Account], instances: dict[str, Instance]) -> None:
+    account = accounts[args.account]
+    api = CloudflareAPI(account)
+    repos = registry_images(account)
+    creds = registry_credentials(account)
+
+    keep, doomed = [], []  # (repository, tag, note)
+    for instance in instances.values():
+        tags = repos.get(instance.repository, [])
+        if not tags:
+            continue
+        deployed = instance.worker in api.workers
+        image = deployed_image(api, instance) if deployed else None
+        in_use = image.rsplit("@", 1)[1] if image and "@" in image else None
+        for tag in sorted(tags):
+            digest = registry_digest(account, creds, instance.repository, tag)
+            short = (digest or "?")[:19]
+            if deployed and not in_use:
+                keep.append((instance.repository, tag, f"{short}  kept: deployed image unknown "
+                                                      f"(deployed before build-info had it; redeploy)"))
+            elif digest and digest == in_use:
+                keep.append((instance.repository, tag, f"{short}  deployed"))
+            else:
+                doomed.append((instance.repository, tag, f"{short}  " +
+                               ("unused" if deployed else "instance not deployed")))
+    # The account has other images too; only "-apy" ones are ours. Mention those
+    # that belong to no instance (left over from a renamed or removed instance).
+    others = sorted(r for r in repos if r.endswith("-apy") and r not in {i.repository for i in instances.values()})
+
+    for repo, tag, note in keep + doomed:
+        info(f"{repo}:{tag}  {note}")
+    if others:
+        info(f"APy repositories of no instance in instances.toml (left alone): {', '.join(others)}")
+    if args.action == "list":
+        return
+    if not doomed:
+        info("Nothing to prune.")
+        return
+    confirm_account(account, f"Delete the {len(doomed)} unused image tags", args.yes)
+    for repo, tag, _ in doomed:
+        delete_image_tag(account, repo, tag)
+
+
 def delete_pair_version(api: CloudflareAPI, pair: str, version: str) -> None:
     for name in (f"{version}.tar.zst", f"{version}.manifest.txt"):
         try:
@@ -1133,12 +1259,24 @@ def main() -> int:
         if action in ("rollback", "delete", "prune"):
             sp.add_argument("-y", "--yes", action="store_true")
 
+    p = sub.add_parser("images", help="APy images in the account's Cloudflare registry",
+                       description="APy images: each deploy pushes one to <instance>-apy in the registry.")
+    images_sub = p.add_subparsers(dest="action", required=True)
+    for action, help in [("list", "list the instances' image tags, and which are deployed"),
+                         ("prune", "delete the tags no deployed instance uses")]:
+        sp = images_sub.add_parser(action, help=help, description=help)
+        sp.add_argument("account", choices=sorted(accounts), help="Cloudflare account")
+        if action == "prune":
+            sp.add_argument("-y", "--yes", action="store_true")
+
     args = parser.parse_args()
     try:
         if args.command == "list":
             cmd_list(args, accounts, instances)
         elif args.command == "pairs":
             cmd_pairs(args, accounts, instances)
+        elif args.command == "images":
+            cmd_images(args, accounts, instances)
         elif args.command in ("deploy", "delete"):
             {"deploy": cmd_deploy, "delete": cmd_delete}[args.command](
                 args, accounts[args.account], instances[args.instance], instances)

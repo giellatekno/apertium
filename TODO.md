@@ -60,15 +60,18 @@ image. Delete this file once everything below is done.
 8. [x] **First commit and push** of this repo: `.gitmodules`, submodules, README, deploy.
 9. [x] Frontend: add a way to use `/translateLLM` (e.g. a toggle) in the html-tools fork.
 10. [ ] **Deploy to Cloudflare** with `deploy/cloudflare/manage.py` (see "Hosting on Cloudflare"
-    in `deploy/README.md`).
-    - test (2026-11-18): `sme-nob` deployed and checked at
-      https://apertium-sme-nob.uit-anders.workers.dev: cold start ~3 s, pairs from R2, `/translate`,
+    in `deploy/README.md`). Instances (`instances.toml`): `jorgal` (sme-nob) and `tolkimine`
+    (fin-est, both directions).
+    - test (2026-11-18): both deployed and checked, at https://jorgal.uit-anders.workers.dev and
+      https://tolkimine.uit-anders.workers.dev: cold start ~3–6 s, pairs from R2, `/translate`,
       `/translateLLM` through the key-adding proxy.
-    - prod: blocked; the Giellatekno account needs the **Workers Paid plan** for Containers. Then
-      `manage.py deploy sme-nob prod` (the bucket and sme-nob are already there).
-    - Afterwards: redirect the old domain to the Worker; later perhaps a custom domain and GitHub
-      Actions. The test registry has an unused image from a failed deploy
-      (`apertium-sme-nob-apy-apy`) that can be deleted.
+    - prod: blocked; the Giellatekno account is on Workers Free, and Containers need the **Workers
+      Paid plan** (check which payment method is on file first). Its workers.dev subdomain is now
+      `giellatekno`, so prod will be `jorgal.giellatekno.workers.dev`. Then
+      `manage.py deploy jorgal prod` (the bucket and sme-nob are already there).
+    - Afterwards: point the old domain (under uit.no) to the Worker; later perhaps GitHub Actions.
+    - tolkimine: language detection doesn't know fin/est (APy's fastText model); est→fin is a much
+      weaker pair than fin→est.
 11. [ ] **Northern Sámi strings** for the `LLM_Post_Editing*` keys, by a native speaker (see the
     note in `README.md`).
 
